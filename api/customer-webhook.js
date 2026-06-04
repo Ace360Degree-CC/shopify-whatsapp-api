@@ -1,4 +1,3 @@
-// /api/customer-webhook.js
 import axios from 'axios';
 
 export default async function handler(req, res) {
@@ -7,16 +6,11 @@ export default async function handler(req, res) {
   try {
     const customer = req.body;
 
-    // Extract customer info
     const customerName = (customer.first_name || '') + ' ' + (customer.last_name || '');
-    let customerPhone = (customer.phone || '').replace(/\D/g, ''); // remove non-digit characters
+    let customerPhone = (customer.phone || '').replace(/\D/g, '');
+    if (!customerPhone.startsWith('91')) customerPhone = '91' + customerPhone;
 
-    // Ensure India country code
-    if (!customerPhone.startsWith('91')) {
-      customerPhone = '91' + customerPhone;
-    }
-
-    // Prepare Pinbot API payload
+    // Pinbot API payload
     const payload = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
@@ -26,12 +20,7 @@ export default async function handler(req, res) {
         name: "welcome_new_customer_",
         language: { code: "en" },
         components: [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: customerName }
-            ]
-          }
+          { type: "body", parameters: [{ type: "text", text: customerName }] }
         ]
       }
     };
@@ -48,7 +37,30 @@ export default async function handler(req, res) {
       }
     );
 
-    // Return success
+    // Only update Shopify metafield if WhatsApp message was sent
+    if (response.data.messages && response.data.messages[0].message_status === "accepted") {
+      // Update Shopify customer metafield to mark welcome message sent
+      await axios.put(
+        `https://${SHOPIFY_STORE}/admin/api/2026-07/customers/${customer.id}.json`,
+        {
+          customer: {
+            id: customer.id,
+            metafields: [
+              {
+                namespace: "custom",
+                key: "welcome_sent",
+                value: "true",
+                type: "boolean"
+              }
+            ]
+          }
+        },
+        {
+          headers: { "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN }
+        }
+      );
+    }
+
     res.status(200).json({ status: 'success', data: response.data });
   } catch (err) {
     console.error(err);
