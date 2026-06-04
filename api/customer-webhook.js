@@ -1,67 +1,48 @@
 import axios from 'axios';
+import crypto from 'crypto';
+
+function verifyWebhook(req) {
+  const hmac = req.headers['x-shopify-hmac-sha256'];
+  const raw = JSON.stringify(req.body);
+  const hash = crypto
+    .createHmac('sha256', process.env.SHOPIFY_WEBHOOK_SECRET)
+    .update(raw, 'utf8')
+    .digest('base64');
+  return hmac === hash;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  if (!verifyWebhook(req)) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
     const customer = req.body;
 
-    const customerName = (customer.first_name || '') + ' ' + (customer.last_name || '');
-    let customerPhone = (customer.phone || '').replace(/\D/g, '');
-    if (!customerPhone.startsWith('91')) customerPhone = '91' + customerPhone;
+    let phone = (customer.phone || '').replace(/\D/g, '');
+    if (!phone) return res.status(200).json({ status: 'no_phone' });
+    if (!phone.startsWith('91')) phone = '91' + phone;
 
-    // Pinbot API payload
-    const payload = {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to: customerPhone,
-      type: "template",
-      template: {
-        name: "welcome_new_customer_",
-        language: { code: "en" },
-        components: [
-          { type: "body", parameters: [{ type: "text", text: customerName }] }
-        ]
-      }
-    };
+    const name = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
 
-    // Call Pinbot API
-    const response = await axios.post(
+    const waRes = await axios.post(
       'https://partnersv1.pinbot.ai/v3/1205280989326662/messages',
-      payload,
       {
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': '031e0cb6-58d8-11f1-894a-02c8a5e042bd'
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: phone,
+        type: 'template',
+        template: {
+          name: 'welcome_new_customer_',
+          language: { code: 'en' },
+          components: [
+            { type: 'body', parameters: [{ type: 'text', text: name }] }
+          ]
         }
-      }
+      },
+      { headers: { 'Content-Type': 'application/json', 'apikey': process.env.PINBOT_API_KEY } }
     );
 
-    // Only update Shopify metafield if WhatsApp message was sent
-    if (response.data.messages && response.data.messages[0].message_status === "accepted") {
-      // Update Shopify customer metafield to mark welcome message sent
-      await axios.put(
-        `https://${SHOPIFY_STORE}/admin/api/2026-07/customers/${customer.id}.json`,
-        {
-          customer: {
-            id: customer.id,
-            metafields: [
-              {
-                namespace: "custom",
-                key: "welcome_sent",
-                value: "true",
-                type: "boolean"
-              }
-            ]
-          }
-        },
-        {
-          headers: { "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN }
-        }
-      );
-    }
-
-    res.status(200).json({ status: 'success', data: response.data });
+    res.status(200).json({ status: 'success', data: waRes.data });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
