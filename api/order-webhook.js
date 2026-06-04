@@ -19,12 +19,35 @@ export default async function handler(req, res) {
     const order = req.body;
 
     const name = `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim();
-    let phone = (order.customer?.phone || order.billing_address?.phone || '').replace(/D/g, '');
+    let phone = (order.customer?.phone || order.billing_address?.phone || order.shipping_address?.phone || '').replace(/\D/g, '');
     if (!phone) return res.status(200).json({ status: 'no_phone' });
     if (!phone.startsWith('91')) phone = '91' + phone;
 
     const orderId = order.order_number || order.id;
+    const isFirstOrder = order.customer?.orders_count === 1;
 
+    // Pehle order pe welcome message bhi bhejo
+    if (isFirstOrder) {
+      await axios.post(
+        'https://partnersv1.pinbot.ai/v3/1205280989326662/messages',
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: phone,
+          type: 'template',
+          template: {
+            name: 'welcome_new_customer_',
+            language: { code: 'en' },
+            components: [
+              { type: 'body', parameters: [{ type: 'text', text: name }] }
+            ]
+          }
+        },
+        { headers: { 'Content-Type': 'application/json', 'apikey': process.env.PINBOT_API_KEY } }
+      );
+    }
+
+    // Har order pe confirmation bhejo
     const waRes = await axios.post(
       'https://partnersv1.pinbot.ai/v3/1205280989326662/messages',
       {
